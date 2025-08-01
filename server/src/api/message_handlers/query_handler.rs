@@ -30,7 +30,7 @@ impl MessageHandler for QueryMessageHandler {
         };
 
         // 校验session_id
-        self.validate_session_id(&session_id, request_session_id)?;
+        self.intercept(&session_id, request_session_id)?;
 
         tracing::info!("session {:?} query resource", session_id);
         // let resource_info = self.resource_app.handle_query(&session_id, resource_id).await?;

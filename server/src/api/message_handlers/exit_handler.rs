@@ -35,7 +35,7 @@ impl MessageHandler for ExitMessageHandler {
         };
 
         // 校验session_id
-        self.validate_session_id(&session_id, request_session_id)?;
+        self.intercept(&session_id, request_session_id)?;
 
         tracing::info!("session {:?} exit received", session_id);
         // 移除会话

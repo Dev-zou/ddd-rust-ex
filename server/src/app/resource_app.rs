@@ -37,13 +37,7 @@ impl ResourceAppService {
         resource_ids: Vec<u16>,
     ) -> Result<(Vec<u16>, Vec<(u16, String)>), AppError> {
         // 检查会话是否已持有资源
-        if self.user_sessions.user_has_resources(session_id).await? {
-            let mut failed_resources = Vec::new();
-            for res_id in resource_ids {
-                failed_resources.push((res_id, "Session already holding resources".to_string()));
-            }
-            return Ok((Vec::new(), failed_resources));
-        }
+        self.user_sessions.validate_and_start_allocate(session_id).await?;
 
         // 申请资源并更新会话状态
         let mut success_res = Vec::new();
@@ -56,7 +50,9 @@ impl ResourceAppService {
             }
         }
 
-        if !success_res.is_empty() {
+        if success_res.is_empty() {
+            self.user_sessions.rollback_applying_session(session_id).await?;
+        } else {
             self.user_sessions.user_add_resources(session_id, success_res.clone()).await?;
         }
 
@@ -177,11 +173,7 @@ mod tests {
 
         // 重复申请应返回空成功资源和失败资源
         service.handle_allocate(&session_ids[0], resource_ids.clone()).await.unwrap();
-        let result = service.handle_allocate(&session_ids[0], resource_ids.clone()).await.unwrap();
-        assert!(result.0.is_empty());
-        assert_eq!(result.1.len(), 1);
-        assert_eq!(result.1[0].0, 1);
-        assert!(result.1[0].1.contains("already holding resources"));
+        assert!(service.handle_allocate(&session_ids[0], resource_ids.clone()).await.is_err());
 
         // 释放未持有的资源应失败
         let invalid_resource_id = vec![2];

@@ -30,7 +30,7 @@ impl MessageHandler for ReleaseMessageHandler {
         };
 
         // 校验session_id
-        self.validate_session_id(&session_id, request_session_id)?;
+        self.intercept(&session_id, request_session_id)?;
 
         tracing::info!("session {:?} release resource {:?}", session_id, resources);
         self.resource_app.handle_release(&session_id, resources).await?;

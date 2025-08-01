@@ -25,17 +25,6 @@ impl SessionAppService {
         Ok(())
     }
 
-    /// 处理退出请求
-    pub async fn handle_exit(&self, session_id: &str) -> Result<(), AppError> {
-        // 1. 检查会话是否存在
-        self.user_sessions.session_exists(session_id).await?;
-
-        // 2. 删除会话
-        self.user_sessions.remove_session(session_id).await?;
-
-        Ok(())
-    }
-
     /// 处理删除会话请求（先释放资源，再删除会话）
     pub async fn handle_remove_session(
         &self,

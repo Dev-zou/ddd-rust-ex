@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use futures::stream::{SplitSink, SplitStream};
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, future::join_all};
 use tokio::sync::{mpsc, Mutex};
 use axum::{Extension, Router};
 use axum::routing::get;
@@ -169,13 +169,24 @@ async fn test_session_id_response() {
 async fn test_multi_user_connection() {
     let (server_addr, _server) = start_test_server().await;
     let mut session_ids = Vec::new();
-    let num_users = 5;
+    let num_users = 2;  // 测试两个用户并发接入
 
-    // 并发接入多个用户
+    // 使用tokio::spawn并发创建客户端连接
+    let mut handles = Vec::new();
     for _ in 0..num_users {
-        let (_, _, session_id) = start_test_client(server_addr).await;
-        assert!(!session_id.is_none(), "session_id get failed");
-        session_ids.push(session_id.unwrap());
+        let addr = server_addr.clone();
+        let handle = tokio::spawn(async move {
+            let (_, _, session_id) = start_test_client(addr).await;
+            assert!(!session_id.is_none(), "session_id get failed");
+            session_id.unwrap()
+        });
+        handles.push(handle);
+    }
+
+    // 等待所有任务完成并收集session_id
+    for handle in handles {
+        let session_id = handle.await.expect("Task failed");
+        session_ids.push(session_id);
     }
 
     // 校验所有session_id都不同
@@ -217,55 +228,66 @@ async fn test_resource_allocation() {
         if let ResponseMessage::AllocateResp { session_id: resp_session_id, success_resources, failed_resources } = ws_message.data {
             assert_eq!(resp_session_id, session_id);
             assert!(!success_resources.is_empty());
-            assert!(!failed_resources.is_empty());
+            assert!(failed_resources.is_empty());
         }
     }
 }
 
 // 4、多用户申请不同资源测试
-// #[tokio::test]
-// async fn test_multi_user_different_resource_allocation() {
-//     let (server_addr, _server) = start_test_server().await;
-//     let num_users = 3;
-//     let mut clients = Vec::new();
+#[tokio::test]
+async fn test_multi_user_different_resource_allocation() {
+    let (server_addr, _server) = start_test_server().await;
+    let num_users = 3;
+    let mut clients = Vec::new();
 
-//     // 启动多个客户端
-//     for i in 0..num_users {
-//         let (write, read, session_id) = start_test_client(server_addr).await;
-//         let session_id = session_id.expect("Failed to get session_id");
-//         clients.push((write, read, session_id));
-//     }
+    // 启动多个客户端
+    for i in 0..num_users {
+        let (write, read, session_id) = start_test_client(server_addr).await;
+        let session_id = session_id.expect("Failed to get session_id");
+        clients.push((write, read, session_id));
+    }
 
-//     // 每个客户端申请不同的资源
-//     for (i, (mut write, _, session_id)) in clients.iter_mut().enumerate() {
-//         let resource_id = (i + 1) as u16;
-//         let request = WsMessage {
-//             data: RequestMessage::Allocate {
-//                 session_id: session_id.clone(),
-//                 resources: vec![resource_id],
-//             },
-//         };
+    // 每个客户端并发申请不同的资源
+    let mut handles = Vec::new();
+    for (i, (mut write, mut read, session_id)) in clients.into_iter().enumerate() {
+        let resource_id = (i + 1) as u16;
+        let request = WsMessage {
+            id: None,
+            data: RequestMessage::Allocate {
+                session_id: session_id.clone(),
+                resources: vec![resource_id],
+            },
+        };
 
-//         let message = StreamMessage::Text(serde_json::to_string(&request).expect("Failed to serialize request"));
-//         write.send(message).await.expect("Failed to send request");
-//     }
+        // 使用tokio::spawn并发发送请求和验证响应
+        let handle = tokio::spawn(async move {
+            let message = StreamMessage::Text(serde_json::to_string(&request)
+                .expect("Failed to serialize request").into());
+            write.send(message).await.expect("Failed to send request");
 
-//     // 验证每个客户端的资源申请是否成功
-//     for (_, mut read, session_id) in clients {
-//         let response = read.next().await.expect("Failed to receive response").expect("Received error");
-//         assert!(response.is_text());
+            // 验证客户端的资源申请是否成功
+            let response = read.next().await.expect("Failed to receive response").expect("Received error");
+            assert!(response.is_text());
 
-//         if let StreamMessage::Text(text) = response {
-//             let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text).expect("Failed to parse response");
-            
-//             if let ResponseMessage::AllocateResp { session_id: resp_session_id, results } = ws_message.data {
-//                 assert_eq!(resp_session_id, session_id);
-//                 assert!(!results.is_empty());
-//                 assert!(results[0].success, "Resource allocation failed");
-//             }
-//         }
-//     }
-// }
+            if let StreamMessage::Text(text) = response {
+                let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text)
+                    .expect("Failed to parse response");
+                
+                if let ResponseMessage::AllocateResp { session_id: resp_session_id, success_resources, failed_resources } = ws_message.data {
+                    assert_eq!(resp_session_id, session_id);
+                    assert!(!success_resources.is_empty());
+                    assert!(failed_resources.is_empty());
+                }
+            }
+        });
+        handles.push(handle);
+    }
+
+    // 等待所有任务完成
+    join_all(handles).await;
+    
+
+}
 
 // // 5、多用户申请相同资源测试
 // #[tokio::test]

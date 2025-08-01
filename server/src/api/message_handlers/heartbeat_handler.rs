@@ -30,7 +30,7 @@ impl MessageHandler for HeartbeatMessageHandler {
         };
 
         // 校验session_id
-        self.validate_session_id(&session_id, request_session_id)?;
+        self.intercept(&session_id, request_session_id)?;
 
         tracing::info!("session {:?} heartbeat received", session_id);
         self.session_app.handle_heartbeat(&session_id).await?;

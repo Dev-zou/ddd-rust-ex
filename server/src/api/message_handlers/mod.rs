@@ -18,9 +18,9 @@ pub trait MessageHandler {
     /// 处理消息并返回响应
     fn handle(&self, session_id: String, data: &[u8], message_id: Option<String>) -> impl std::future::Future<Output = Result<String, super::error::ApiError>> + Send;
 
-    /// 校验请求中的session_id与服务器保存的session_id是否一致
-    fn validate_session_id(&self, server_saved_session_id: &str, request_session_id: &str) -> Result<(), super::error::ApiError> {
-        // 校验session_id
+    /// 拦截异常请求
+    fn intercept(&self, server_saved_session_id: &str, request_session_id: &str) -> Result<(), super::error::ApiError> {
+        // 校验请求中的session_id与服务器保存的session_id是否一致
         if request_session_id != server_saved_session_id {
             return Err(super::error::ApiError::InvalidSessionId);
         }

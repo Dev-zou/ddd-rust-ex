@@ -6,6 +6,10 @@ pub enum UserSessionsError {
     QuotaExceeded(u32),
     #[error("Session {0} not exists")]
     InvalidSession(String),
+    #[error("Session {0} is in applying status")]
+    SessionInApplying(String),
+    #[error("Invalid status {1} for session {0}")]
+    InvalidSessionStatus(String, String),
 }
 
 #[derive(Debug, Error)]

@@ -10,6 +10,7 @@ use crate::domain::error::UserSessionsError;
 #[allow(dead_code)]
 pub enum UserStatus {
     Free,
+    Applying,
     Helding,
 }
 
@@ -73,11 +74,7 @@ impl UserSessions {
         if let Some(session) = sessions.get_mut(session_id) {
             session.resources = resources;
             session.last_time = SystemTime::now();
-            session.status = if session.resources.is_empty() {
-                UserStatus::Free
-            } else {
-                UserStatus::Helding
-            };
+            session.status = UserStatus::Helding;
             Ok(())
         } else {
             Err(UserSessionsError::InvalidSession(session_id.to_owned()))
@@ -96,6 +93,41 @@ impl UserSessions {
             if session.resources.is_empty() {
                 session.status = UserStatus::Free;
             }
+            Ok(())
+        } else {
+            Err(UserSessionsError::InvalidSession(session_id.to_owned()))
+        }
+    }
+
+    /// 校验用户是否可以申请资源
+    /// 只有Free状态的用户才能申请资源，并将状态置为Applying
+    pub async fn validate_and_start_allocate(&self, session_id: &str) -> Result<(), UserSessionsError> {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(session_id) {
+            match session.status {
+                UserStatus::Free => {
+                    session.status = UserStatus::Applying;
+                    session.last_time = SystemTime::now();
+                    Ok(())
+                },
+                _ => {
+                    Err(UserSessionsError::InvalidSessionStatus(
+                        session_id.to_owned(),
+                        format!("{:?}", session.status),
+                    ))
+                },
+            }
+        } else {
+            Err(UserSessionsError::InvalidSession(session_id.to_owned()))
+        }
+    }
+
+    /// 完成资源申请，没有申请到资源，将状态从Applying置为Free
+    pub async fn rollback_applying_session(&self, session_id: &str) -> Result<(), UserSessionsError> {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(session_id) {
+            session.last_time = SystemTime::now();
+            session.status = UserStatus::Free;
             Ok(())
         } else {
             Err(UserSessionsError::InvalidSession(session_id.to_owned()))
