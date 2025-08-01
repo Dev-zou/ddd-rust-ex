@@ -285,165 +285,173 @@ async fn test_multi_user_different_resource_allocation() {
 
     // 等待所有任务完成
     join_all(handles).await;
-    
+}
+
+// 5、多用户申请相同资源测试
+#[tokio::test]
+async fn test_multi_user_same_resource_allocation() {
+    let (server_addr, _server) = start_test_server().await;
+    let num_users = 3;
+    let resource_id = 1;
+    let mut clients = Vec::new();
+    let mut success_count = 0;
+
+    // 启动多个客户端
+    for _ in 0..num_users {
+        let (write, read, session_id) = start_test_client(server_addr).await;
+        let session_id = session_id.expect("Failed to get session_id");
+        clients.push((write, read, session_id));
+    }
+
+    // 所有客户端申请相同资源
+    let mut handles = Vec::new();
+    for (mut write, mut read, session_id) in clients.into_iter() {
+        let request = WsMessage {
+            id: None,
+            data: RequestMessage::Allocate {
+                session_id: session_id.clone(),
+                resources: vec![resource_id],
+            },
+        };
+
+        let handle = tokio::spawn(async move {
+            let message = StreamMessage::Text(serde_json::to_string(&request).expect("Failed to serialize request").into());
+            write.send(message).await.expect("Failed to send request");
+
+            let response = read.next().await.expect("Failed to receive response").expect("Received error");
+            assert!(response.is_text());
+
+            if let StreamMessage::Text(text) = response {
+                let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text).expect("Failed to parse response");
+                
+                if let ResponseMessage::AllocateResp { session_id: resp_session_id, success_resources, failed_resources } = ws_message.data {
+                    if !success_resources.is_empty() {
+                        success_count += 1;
+                    }
+                }
+            }
+            assert_eq!(success_count, 1, "Expected exactly one successful allocation");
+
+        });
+        handles.push(handle);
+    }
+
+    // 等待所有任务完成
+    join_all(handles).await;
 
 }
 
-// // 5、多用户申请相同资源测试
-// #[tokio::test]
-// async fn test_multi_user_same_resource_allocation() {
-//     let (server_addr, _server) = start_test_server().await;
-//     let num_users = 3;
-//     let resource_id = 1;
-//     let mut clients = Vec::new();
-//     let mut success_count = 0;
+// 6、用户释放资源测试
+#[tokio::test]
+async fn test_resource_release() {
+    let (server_addr, server) = start_test_server().await;
+    let (mut write, mut read, session_id) = start_test_client(server_addr).await;
+    let session_id = session_id.expect("Failed to get session_id");
 
-//     // 启动多个客户端
-//     for _ in 0..num_users {
-//         let (write, read, session_id) = start_test_client(server_addr).await;
-//         let session_id = session_id.expect("Failed to get session_id");
-//         clients.push((write, read, session_id));
-//     }
+    // 先申请资源
+    let request_allocate = WsMessage {
+        id: None,
+        data: RequestMessage::Allocate {
+            session_id: session_id.clone(),
+            resources: vec![1],
+        },
+    };
 
-//     // 所有客户端申请相同资源
-//     for (mut write, _, session_id) in clients.iter_mut() {
-//         let request = WsMessage {
-//             data: RequestMessage::Allocate {
-//                 session_id: session_id.clone(),
-//                 resources: vec![resource_id],
-//             },
-//         };
+    let message_allocate = StreamMessage::Text(serde_json::to_string(&request_allocate).expect("Failed to serialize request").into());
+    write.send(message_allocate).await.expect("Failed to send request");
 
-//         let message = StreamMessage::Text(serde_json::to_string(&request).expect("Failed to serialize request"));
-//         write.send(message).await.expect("Failed to send request");
-//     }
+    // 接收申请响应
+    let response = read.next().await.expect("Failed to receive response").expect("Received error");
+    if let StreamMessage::Text(text) = response {
+        let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text).expect("Failed to parse response");
+                assert!(matches!(ws_message.data, ResponseMessage::AllocateResp { .. }));
+    }
+    
+    // 释放资源
+    let request_release = WsMessage {
+        id: None,
+        data: RequestMessage::Release {
+            session_id: session_id.clone(),
+            resources: vec![1],
+        },
+    };
 
-//     // 验证只有一个客户端申请成功
-//     for (_, mut read, _) in clients {
-//         let response = read.next().await.expect("Failed to receive response").expect("Received error");
-//         assert!(response.is_text());
+    let message_release = StreamMessage::Text(serde_json::to_string(&request_release).expect("Failed to serialize request").into());
+    write.send(message_release).await.expect("Failed to send request");
 
-//         if let StreamMessage::Text(text) = response {
-//             let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text).expect("Failed to parse response");
-            
-//             if let ResponseMessage::AllocateResp { results, .. } = ws_message.data {
-//                 assert!(!results.is_empty());
-//                 if results[0].success {
-//                     success_count += 1;
-//                 }
-//             }
-//         }
-//     }
+    // 接收释放响应
+    let response = read.next().await.expect("Failed to receive response").expect("Received error");
+    assert!(response.is_text());
 
-//     assert_eq!(success_count, 1, "Expected exactly one successful allocation");
-// }
-
-// // 6、用户释放资源测试
-// #[tokio::test]
-// async fn test_resource_release() {
-//     let (server_addr, _server) = start_test_server().await;
-//     let (mut write, mut read, session_id) = start_test_client(server_addr).await;
-//     let session_id = session_id.expect("Failed to get session_id");
-
-//     // 先申请资源
-//     let request_allocate = WsMessage {
-//         data: RequestMessage::Allocate {
-//             session_id: session_id.clone(),
-//             resources: vec![1],
-//         },
-//     };
-
-//     let message_allocate = StreamMessage::Text(serde_json::to_string(&request_allocate).expect("Failed to serialize request"));
-//     write.send(message_allocate).await.expect("Failed to send request");
-
-//     // 接收申请响应
-//     let _ = read.next().await.expect("Failed to receive response").expect("Received error");
-
-//     // 释放资源
-//     let request_release = WsMessage {
-//         data: RequestMessage::Release {
-//             session_id: session_id.clone(),
-//             resources: vec![1],
-//         },
-//     };
-
-//     let message_release = StreamMessage::Text(serde_json::to_string(&request_release).expect("Failed to serialize request"));
-//     write.send(message_release).await.expect("Failed to send request");
-
-//     // 接收释放响应
-//     let response = read.next().await.expect("Failed to receive response").expect("Received error");
-//     assert!(response.is_text());
-
-//     if let StreamMessage::Text(text) = response {
-//         let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text).expect("Failed to parse response");
+    if let StreamMessage::Text(text) = response {
+        let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text).expect("Failed to parse response");
         
-//         // 验证响应类型
-//         assert!(matches!(ws_message.data, ResponseMessage::ReleaseResp { .. }));
-//         if let ResponseMessage::ReleaseResp { session_id: resp_session_id, results } = ws_message.data {
-//             assert_eq!(resp_session_id, session_id);
-//             assert!(!results.is_empty());
-//             assert!(results[0].success, "Resource release failed");
-//         }
-//     }
-// }
+        // 验证响应类型
+        assert!(matches!(ws_message.data, ResponseMessage::ReleaseResp { .. }));
+        if let ResponseMessage::ReleaseResp { session_id: resp_session_id } = ws_message.data {
+            assert_eq!(resp_session_id, session_id);
+        }
+    }
+    // assert_eq!(server.user_sessions.user_get_resources(session_id).await, Ok(vec![]));
+}
 
-// // 7、多用户释放资源测试
-// #[tokio::test]
-// async fn test_multi_user_resource_release() {
-//     let (server_addr, _server) = start_test_server().await;
-//     let num_users = 3;
-//     let mut clients = Vec::new();
+// 7、多用户释放资源测试
+#[tokio::test]
+async fn test_multi_user_resource_release() {
+    let (server_addr, _server) = start_test_server().await;
+    let num_users = 3;
+    let mut clients = Vec::new();
 
-//     // 启动多个客户端并申请资源
-//     for i in 0..num_users {
-//         let (write, read, session_id) = start_test_client(server_addr).await;
-//         let session_id = session_id.expect("Failed to get session_id");
-//         let resource_id = (i + 1) as u16;
-//         clients.push((write, read, session_id, resource_id));
-//     }
+    // 启动多个客户端并申请资源
+    for i in 0..num_users {
+        let (write, read, session_id) = start_test_client(server_addr).await;
+        let session_id = session_id.expect("Failed to get session_id");
+        let resource_id = (i + 1) as u16;
+        clients.push((write, read, session_id, resource_id));
+    }
 
-//     // 每个客户端申请资源
-//     for (mut write, _, session_id, resource_id) in clients.iter_mut() {
-//         let request = WsMessage {
-//             data: RequestMessage::Allocate {
-//                 session_id: session_id.clone(),
-//                 resources: vec![*resource_id],
-//             },
-//         };
+    // 每个客户端申请资源
+    for (write, read, session_id, resource_id) in clients.iter_mut() {
+        let request = WsMessage {
+            id: None,
+            data: RequestMessage::Allocate {
+                session_id: session_id.clone(),
+                resources: vec![*resource_id],
+            },
+        };
 
-//         let message = StreamMessage::Text(serde_json::to_string(&request).expect("Failed to serialize request"));
-//         write.send(message).await.expect("Failed to send request");
-//         // 接收申请响应
-//         let _ = read.next().await.expect("Failed to receive response").expect("Received error");
-//     }
+        let message = StreamMessage::Text(serde_json::to_string(&request).expect("Failed to serialize request").into());
+        write.send(message).await.expect("Failed to send request");
+        // 接收申请响应
+        let _unused = read.next().await.expect("Failed to receive response").expect("Received error");
+    }
 
-//     // 每个客户端释放资源
-//     for (mut write, mut read, session_id, resource_id) in clients {
-//         let request = WsMessage {
-//             data: RequestMessage::Release {
-//                 session_id: session_id.clone(),
-//                 resources: vec![resource_id],
-//             },
-//         };
+    // 每个客户端释放资源
+    for (mut write, mut read, session_id, resource_id) in clients {
+        let request = WsMessage {
+            id: None,
+            data: RequestMessage::Release {
+                session_id: session_id.clone(),
+                resources: vec![resource_id],
+            },
+        };
 
-//         let message = StreamMessage::Text(serde_json::to_string(&request).expect("Failed to serialize request"));
-//         write.send(message).await.expect("Failed to send request");
+        let message = StreamMessage::Text(serde_json::to_string(&request).expect("Failed to serialize request").into());
+        write.send(message).await.expect("Failed to send request");
 
-//         // 接收释放响应
-//         let response = read.next().await.expect("Failed to receive response").expect("Received error");
-//         assert!(response.is_text());
+        // 接收释放响应
+        let response = read.next().await.expect("Failed to receive response").expect("Received error");
+        assert!(response.is_text());
 
-//         if let StreamMessage::Text(text) = response {
-//             let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text).expect("Failed to parse response");
+        if let StreamMessage::Text(text) = response {
+            let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text).expect("Failed to parse response");
             
-//             if let ResponseMessage::ReleaseResp { session_id: resp_session_id, results } = ws_message.data {
-//                 assert_eq!(resp_session_id, session_id);
-//                 assert!(!results.is_empty());
-//                 assert!(results[0].success, "Resource release failed");
-//             }
-//         }
-//     }
-// }
+            if let ResponseMessage::ReleaseResp { session_id: resp_session_id } = ws_message.data {
+                assert_eq!(resp_session_id, session_id);
+            }
+        }
+    }
+}
 
 // // 8、用户心跳测试
 // #[tokio::test]
