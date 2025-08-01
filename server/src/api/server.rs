@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::collections::HashMap;
+use tokio::time::{interval, Duration};
 
 use crate::api::middlewares::logger;
 use crate::{api::{error::ApiError, message::{RequestMessage, ResponseMessage, WsMessage}}, app::{resource_app::ResourceAppService, session_app::SessionAppService, config}}; 
@@ -26,7 +27,6 @@ async fn handle_websocket(
 }
 
 /// API服务
-#[derive(Clone)]
 pub struct ApiServer {
     /// 会话应用服务
     session_app: Arc<SessionAppService>,
@@ -71,7 +71,7 @@ impl ApiServer {
         let resource_pool = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(CLibResourceProvider)));
         
         let session_app = Arc::new(SessionAppService::new(user_sessions.clone()));
-        let (resource_app, _rx) = ResourceAppService::new(user_sessions, resource_pool);
+        let resource_app= ResourceAppService::new(user_sessions, resource_pool);
         let resource_app = Arc::new(resource_app);
 
         Arc::new(Self::new(session_app, resource_app))
@@ -84,7 +84,7 @@ impl ApiServer {
         let resource_pool = Arc::new(ResourcePool::new(max_resource_num, Arc::new(CLibResourceProvider)));
         
         let session_app = Arc::new(SessionAppService::new(user_sessions.clone()));
-        let (resource_app, _rx) = ResourceAppService::new(user_sessions, resource_pool);
+        let resource_app = ResourceAppService::new(user_sessions, resource_pool);
         let resource_app = Arc::new(resource_app);
 
         Arc::new(Self::new(session_app, resource_app))
@@ -241,16 +241,73 @@ impl ApiServer {
     // AllocateMessageHandler, ReleaseMessageHandler, QueryMessageHandler, HeartbeatMessageHandler, ExitMessageHandler
 
     /// 处理超时通知
-    fn spawn_notification_handler(&self, mut rx: mpsc::Receiver<(String, u16)>) {
+    pub fn spawn_timeout_notify_worker(&self) {
+        let resource_app = self.resource_app.clone();
         let connections = self.connections.clone();
         tokio::spawn(async move {
-            while let Some((session_id, resource_id)) = rx.recv().await {
-                let connections = connections.lock().await;
-                if let Some(tx) = connections.get(&session_id) {
-                    let msg = format!("TIMEOUT_RELEASE:资源{resource_id}因超时已被释放");
-                    let _unused = tx.send(msg).await;
+            let mut interval = interval(Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+                // 创建释放通知消息
+                let timeout_resources = resource_app.get_and_release_timeout_resources().await;
+                if timeout_resources.is_empty() {
+                    continue;
+                }
+                for (session_id, resource_ids) in timeout_resources {
+                    let release_resp = ResponseMessage::TimeoutResourceInfo {
+                        session_id: session_id.clone(),
+                        timeout_resources: resource_ids,
+                    };
+                    let ws_message = WsMessage::new(None, release_resp);
+                    let json_str = match serde_json::to_string(&ws_message) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to serialize timeout release notification: {:?}", e);
+                            continue;
+                        }
+                    };
+                    // 发送通知到对应会话
+                    let connections = connections.lock().await;
+                    if let Some(tx) = connections.get(&session_id) {
+                        if tx.send(json_str).await.is_err() {
+                            tracing::warn!("Failed to send timeout release notification to session {}", session_id);
+                        }
+                    } else {
+                        tracing::warn!("Session {} not found for timeout release notification", session_id);
+                    }
                 }
             }
         });
     }
 }
+
+
+        // tokio::spawn(async move {
+        //     let mut interval = interval(Duration::from_secs(1));
+        //     loop {
+        //         interval.tick().await;
+                
+        //         // 检测超时资源（10秒超时）
+        //         let timeouts = pool.get_timeout_resources(10).await;
+        //         for (resource_id, session_id) in timeouts {
+        //             // 双重验证防止状态变更
+        //             if pool.is_held_by_session(resource_id, &session_id).await {
+        //                 // 释放资源
+        //                 if let Err(e) = pool.release_resource(resource_id).await {
+        //                     tracing::info!("超时释放失败: {:?}", e);
+        //                     continue;
+        //                 }
+                        
+        //                 // 清理会话
+        //                 if let Err(e) = sessions.user_release_resources(&session_id, vec![resource_id]).await {
+        //                     tracing::info!("会话清理失败: {:?}", e);
+        //                 }
+                        
+        //                 // 发送通知
+        //                 if let Err(e) = tx.send((session_id, resource_id)).await {
+        //                     tracing::info!("通知发送失败: {:?}", e);
+        //                 }
+        //             }
+        //         }
+        //     }
+        // });

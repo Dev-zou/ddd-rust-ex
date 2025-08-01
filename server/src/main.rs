@@ -24,6 +24,8 @@ async fn main() {
     
     let router = server.clone().create_router();
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
+
+    server.spawn_timeout_notify_worker();
     
     server.run(addr, router).await;
 }

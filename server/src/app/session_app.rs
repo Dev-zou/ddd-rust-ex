@@ -75,7 +75,7 @@ mod tests {
     async fn test_remove_session_with_resources() {
         let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
         let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
-        let (resource_app, _rx) = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
+        let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
         let resource_app = Arc::new(resource_app);
         let session_app = SessionAppService::new(mock_sessions.clone());
 
@@ -99,7 +99,7 @@ mod tests {
     async fn test_remove_session_not_exists() {
         let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
         let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
-        let (resource_app, _rx) = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
+        let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
         let resource_app = Arc::new(resource_app);
         let session_app = SessionAppService::new(mock_sessions.clone());
 
@@ -136,7 +136,7 @@ mod tests {
     async fn test_concurrent_remove_sessions() {
         let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
         let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
-        let (resource_app, _rx) = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
+        let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
         let resource_app = Arc::new(resource_app);
         let session_app = Arc::new(SessionAppService::new(mock_sessions.clone()));
 
@@ -179,7 +179,7 @@ mod tests {
     async fn test_race_condition_on_same_session() {
         let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
         let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
-        let (resource_app, _rx) = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
+        let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
         let resource_app = Arc::new(resource_app);
         let session_app = Arc::new(SessionAppService::new(mock_sessions.clone()));
 

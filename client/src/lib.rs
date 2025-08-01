@@ -5,10 +5,7 @@ use tokio_tungstenite::{connect_async, tungstenite, WebSocketStream};
 use tungstenite::http::{Method, Request};
 use tungstenite::protocol::Message as StreamMessage;
 use url::Url;
-use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Duration};
-// 导入tracing库
-use tracing::{error, info, warn};
 // use std::sync::Arc;
 use std::ptr;
 use std::os::raw::c_char;
@@ -140,7 +137,7 @@ impl Client {
                 write.send(StreamMessage::Text(json_str.into())).await?;
 
                 // 等待响应
-                if let Some(mut read) = self.read.as_mut() {
+                if let Some(read) = self.read.as_mut() {
                     if let Some(Ok(message)) = read.next().await {
                         if let StreamMessage::Text(text) = message {
                             let ws_message: WsMessage<ResponseMessage> = serde_json::from_str(&text)?;

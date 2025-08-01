@@ -42,6 +42,10 @@ pub enum ResponseMessage {
         session_id: String,
         resources: Vec<u16>,
     },
+    TimeoutResourceInfo {
+        session_id: String,
+        timeout_resources: Vec<u16>,
+    },
     HeartbeatResp {
         session_id: String,
     },

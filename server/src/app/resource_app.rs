@@ -5,29 +5,23 @@ use crate::app::error::AppError;
 use crate::domain::user_sessions::{UserSessions};
 use crate::domain::resource_pool::ResourcePool;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct ResourceAppService {
     user_sessions: Arc<UserSessions>,
     resource_pool: Arc<ResourcePool>,
-    notification_tx: mpsc::Sender<(String, u16)>, // (session_id, resource_id)
-
 }
 
 impl ResourceAppService {
     pub fn new(
         user_sessions: Arc<UserSessions>,
         resource_pool: Arc<ResourcePool>,
-    ) -> (Self, mpsc::Receiver<(String, u16)>) {
-        let (tx, rx) = mpsc::channel(100);
-        (
-            Self { 
-                user_sessions, 
-                resource_pool,
-                notification_tx: tx,
-            },
-            rx
-        )
+    ) -> Self {
+        Self { 
+            user_sessions, 
+            resource_pool,
+        }
     }
 
     /// 处理资源申请请求
@@ -81,40 +75,32 @@ impl ResourceAppService {
     }
 
     /// 启动超时检测任务
-    pub fn spawn_timeout_task(&self) {
+    pub async fn get_and_release_timeout_resources(&self) -> HashMap<String, Vec<u16>> {
         let pool = self.resource_pool.clone();
         let sessions = self.user_sessions.clone();
-        let tx = self.notification_tx.clone();
         
-        tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(1));
-            loop {
-                interval.tick().await;
-                
-                // 检测超时资源（10秒超时）
-                let timeouts = pool.get_timeout_resources(10).await;
-                for (resource_id, session_id) in timeouts {
-                    // 双重验证防止状态变更
-                    if pool.is_held_by_session(resource_id, &session_id).await {
-                        // 释放资源
-                        if let Err(e) = pool.release_resource(resource_id).await {
-                            tracing::info!("超时释放失败: {:?}", e);
-                            continue;
-                        }
-                        
-                        // 清理会话
-                        if let Err(e) = sessions.user_release_resources(&session_id, vec![resource_id]).await {
-                            tracing::info!("会话清理失败: {:?}", e);
-                        }
-                        
-                        // 发送通知
-                        if let Err(e) = tx.send((session_id, resource_id)).await {
-                            tracing::info!("通知发送失败: {:?}", e);
-                        }
-                    }
-                }
+        let mut timeouts_resources = HashMap::new();
+        // 检测超时资源（10秒超时）
+        let timeouts = pool.get_timeout_resources(10).await;
+        for (resource_id, session_id) in timeouts {
+            // 释放资源
+            if let Err(e) = pool.release_resource(resource_id).await {
+                tracing::info!("超时释放失败: {:?}", e);
+                continue;
             }
-        });
+            
+            // 清理会话
+            if let Err(e) = sessions.user_release_resources(&session_id, vec![resource_id]).await {
+                tracing::info!("会话清理失败: {:?}", e);
+            }
+            
+            if(timeouts_resources.get(&session_id).is_none()){
+                timeouts_resources.insert(session_id, vec![resource_id]);
+            } else {
+                timeouts_resources.get_mut(&session_id).unwrap().push(resource_id);
+            }
+        }
+        timeouts_resources
     }
 }
 
@@ -136,7 +122,7 @@ mod tests {
         for session_id in session_ids {
             session_service.handle_add_session(session_id.clone()).await.unwrap();
         }
-        let (app, _rx) = ResourceAppService::new(user_sessions.clone(), resource_pool.clone());
+        let app = ResourceAppService::new(user_sessions.clone(), resource_pool.clone());
         app
     }
 
@@ -145,7 +131,7 @@ mod tests {
         // 初始化依赖
         let user_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
         let resource_pool = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
-        let (resource_service, _rx) = ResourceAppService::new(user_sessions.clone(), resource_pool.clone());
+        let resource_service = ResourceAppService::new(user_sessions.clone(), resource_pool.clone());
         let session_service = SessionAppService::new(user_sessions.clone());
 
         // 添加session
@@ -269,7 +255,7 @@ mod tests {
         // 初始化依赖
         let user_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
         let resource_pool = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
-        let (resource_service, _rx) = ResourceAppService::new(user_sessions.clone(), resource_pool.clone());
+        let resource_service = ResourceAppService::new(user_sessions.clone(), resource_pool.clone());
         let session_service = SessionAppService::new(user_sessions.clone());
 
         // 添加session
