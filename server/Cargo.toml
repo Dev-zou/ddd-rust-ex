@@ -1,0 +1,63 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+description = "resource management server"
+license = "MIT"
+categories = ["development-frameworks"]
+repository = "https://gerrit.zte.com.cn/#/admin/projects/SecLab/Rust_Competition"
+readme = "README.md"
+keywords = ["resource"]
+
+[dependencies]
+common = { path = "../common" }
+axum = { version = "0.8.4", features = ["json", "macros", "tracing", "ws"]  }
+tokio = {version = "1.45.0", features = ["full"]}
+tracing = {version = "0.1.41", features = ["async-await"]}
+tracing-subscriber = {version = "0.3.19", features = ["env-filter", "chrono"]}
+config = {version = "0.15.11", features = ["yaml"]}
+serde = {version = "1.0.219", features = ["derive"]}
+anyhow = {version = "1.0.98"}
+uuid = { version = "1.6.2", features = ["v4"] }
+chrono = { version = "0.4.33", features = ["serde"] }
+once_cell = "1.21.3"
+serde_json = "1.0.141"
+futures-util = "0.3.31"
+futures = "0.3.31"
+mockall = "0.13.1"
+thiserror = "2.0.12"
+libc = "0.2.174"
+axum-test = "17.3.0"
+tokio-tungstenite = "0.27.0"
+url = "2.5.4"
+
+[dev-dependencies]
+axum = { version = "0.8.4", features = ["json", "macros", "tracing"]  }
+tokio = {version = "1.45.0", features = ["full"]}
+serde = { version = "1.0", features = ["derive"] }
+axum-test = "17.3.0"
+
+[lints.clippy]
+all = { level = "deny", priority = 0 }
+pedantic = { level = "deny", priority = 0 }
+nursery = { level = "deny", priority = 0 }
+cargo = { level = "deny", priority = 0 }
+
+module_name_repetitions = { level = "allow", priority = 1 }
+missing_errors_doc = { level = "allow", priority = 1 }
+missing_panics_doc = { level = "allow", priority = 1 }
+wildcard_dependencies = { level = "allow", priority = 1 }
+multiple_crate_versions = { level = "allow", priority = 1 }
+
+[lints.rust]
+warnings = "deny"
+future-incompatible = "deny"
+keyword-idents = "deny"
+let-underscore = "deny"
+nonstandard-style = "deny"
+refining-impl-trait = "deny"
+rust-2021-compatibility = "deny"
+rust-2024-compatibility = "deny"
+
+unused = "allow"
+dead-code = "allow"
