@@ -21,28 +21,45 @@ impl QueryMessageHandler {
 }
 
 impl MessageHandler for QueryMessageHandler {
-    async fn handle(&self, session_id: String, data: &[u8], message_id: Option<String>) -> Result<String, ApiError> {
+    async fn handle(&self, base_session_id: String, data: &[u8], message_id: Option<String>) -> Result<String, ApiError> {
         // 解析请求数据
         let ws_message = serde_json::from_slice::<WsMessage<RequestMessage>>(data).unwrap();
         let request_session_id = match &ws_message.data {
             RequestMessage::Query { session_id } => session_id,
-            _ => return Err(ApiError::InvalidRequest),
+            _ => {
+                return Ok(self.new_default_resp(base_session_id, 1));
+            }
         };
 
         // 校验session_id
-        self.intercept(&session_id, request_session_id)?;
+        let err_code = self.intercept(&base_session_id, request_session_id);
+        if err_code != 0 {
+            return Ok(self.new_default_resp(request_session_id.clone(), err_code));
+        }
+        tracing::info!("session {:?} query resource", base_session_id);
+        if let Ok(resource_info) = self.resource_app.handle_query(&base_session_id).await {
+            // 构建响应
+            let response = ResponseMessage::QueryResp {
+                session_id: base_session_id.clone(),
+                resources: resource_info,
+                error_code: 0,
+            };
+            let response_ws_message = WsMessage::new(message_id, response);
 
-        tracing::info!("session {:?} query resource", session_id);
-        // let resource_info = self.resource_app.handle_query(&session_id, resource_id).await?;
-        let resource_info = vec![0];
+            return Ok(serde_json::to_string(&response_ws_message).unwrap());
+        }
 
-        // 构建响应
+        Ok(self.new_default_resp(base_session_id, 2))
+    }
+
+    fn new_default_resp(&self, session_id: String, error_code: u32) -> String {
         let response = ResponseMessage::QueryResp {
             session_id: session_id.clone(),
-            resources: resource_info,
+            resources: Vec::new(),
+            error_code,
         };
-        let response_ws_message = WsMessage::new(message_id, response);
+        let response_ws_message = WsMessage::new(None, response);
 
-        Ok(serde_json::to_string(&response_ws_message).unwrap())
+        serde_json::to_string(&response_ws_message).unwrap()
     }
 }

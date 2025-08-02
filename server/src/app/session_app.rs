@@ -2,6 +2,7 @@ use crate::app::error::AppError;
 use crate::app::resource_app::ResourceAppService;
 use crate::domain::user_sessions::UserSessions;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tracing::warn;
 
 pub struct SessionAppService {
@@ -50,6 +51,10 @@ impl SessionAppService {
 
         Ok(())
     }
+
+    pub async fn get_session_num(&self) -> usize {
+        self.user_sessions.get_session_num().await
+    }
 }
 
 #[cfg(test)]
@@ -74,7 +79,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_session_with_resources() {
         let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
-        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
+        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider), config::RESOURCE_TIMEOUT_SECS));
         let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
         let resource_app = Arc::new(resource_app);
         let session_app = SessionAppService::new(mock_sessions.clone());
@@ -98,7 +103,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_session_not_exists() {
         let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
-        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
+        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider), config::RESOURCE_TIMEOUT_SECS));
         let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
         let resource_app = Arc::new(resource_app);
         let session_app = SessionAppService::new(mock_sessions.clone());
@@ -135,7 +140,7 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_remove_sessions() {
         let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
-        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
+        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider), config::RESOURCE_TIMEOUT_SECS));
         let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
         let resource_app = Arc::new(resource_app);
         let session_app = Arc::new(SessionAppService::new(mock_sessions.clone()));
@@ -178,7 +183,7 @@ mod tests {
     #[tokio::test]
     async fn test_race_condition_on_same_session() {
         let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
-        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider)));
+        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider), config::RESOURCE_TIMEOUT_SECS));
         let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
         let resource_app = Arc::new(resource_app);
         let session_app = Arc::new(SessionAppService::new(mock_sessions.clone()));
@@ -214,5 +219,208 @@ mod tests {
         let results = futures::future::join_all(vec![handle1, handle2]).await;
         assert!(results.iter().any(|r| r.as_ref().unwrap().is_ok()));
         assert!(mock_sessions.session_exists(&session_id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_handle_heartbeat() {
+        let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
+        let session_app = SessionAppService::new(mock_sessions.clone());
+        let session_id = "session_heartbeat".to_string();
+
+        // 测试1: 更新存在的会话的心跳时间
+        session_app.handle_add_session(session_id.clone()).await.unwrap();
+
+        // 验证会话存在
+        assert!(mock_sessions.session_exists(&session_id).await.is_ok());
+
+        // 更新心跳
+        let result = session_app.handle_heartbeat(&session_id).await;
+        assert!(result.is_ok());
+
+        // 测试2: 尝试更新不存在的会话的心跳时间
+        let invalid_session_id = "invalid_session_heartbeat".to_string();
+        let result = session_app.handle_heartbeat(&invalid_session_id).await;
+        assert!(result.is_err());
+    }
+
+    // 异常场景测试: 会话数量超限
+    #[tokio::test]
+    async fn test_exceed_max_sessions() {
+        let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
+        let session_app = SessionAppService::new(mock_sessions.clone());
+
+        // 添加MAX_SESSION_NUM个会话
+        for i in 0..config::MAX_SESSION_NUM {
+            let session_id = format!("session_{}", i);
+            session_app.handle_add_session(session_id).await.unwrap();
+        }
+
+        // 尝试添加第MAX_SESSION_NUM+1个会话
+        let session_id = format!("session_{}", config::MAX_SESSION_NUM);
+        let result = session_app.handle_add_session(session_id).await;
+
+        // 应该失败
+        assert!(result.is_err());
+    }
+
+    // 异常场景测试: 重复添加相同会话
+    #[tokio::test]
+    async fn test_duplicate_session_addition() {
+        let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
+        let session_app = SessionAppService::new(mock_sessions.clone());
+
+        let session_id = "duplicate_session".to_string();
+
+        // 第一次添加成功
+        session_app.handle_add_session(session_id.clone()).await.unwrap();
+
+        // 第二次添加应该失败或成功更新
+        let result = session_app.handle_add_session(session_id.clone()).await;
+
+        // 根据实现，可能是成功(更新)或失败(已存在)
+        // 这里假设实现允许重复添加(相当于更新)
+        assert!(result.is_ok());
+    }
+
+    // 异常场景测试: 会话超时
+    // #[tokio::test]
+    // async fn test_session_timeout() {
+    //     // 需要假设UserSessions有超时清理功能
+    //     // 这里仅作示例，实际实现可能不同
+    //     let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
+    //     let session_app = SessionAppService::new(mock_sessions.clone());
+
+    //     let session_id = "timeout_session".to_string();
+    //     session_app.handle_add_session(session_id.clone()).await.unwrap();
+
+    //     // 验证会话存在
+    //     assert!(mock_sessions.session_exists(&session_id).await.is_ok());
+
+    //     // 手动设置会话为超时状态
+    //     // 调用UserSessions的update_session_heartbeat方法，传入一个过去的时间
+    //     // 注意：这里假设update_session_heartbeat方法允许设置任意时间
+    //     // 实际实现可能需要修改该方法或添加新方法
+    //     // mock_sessions.update_session_heartbeat_with_time(&session_id, SystemTime::now() - Duration::from_secs(config::SESSION_TIMEOUT_SECS as u64 + 1)).await.unwrap();
+
+    //     // 等待超时清理
+    //     tokio::time::sleep(Duration::from_secs(1)).await;
+
+    //     // 验证会话已被清理
+    //     assert!(mock_sessions.session_exists(&session_id).await.is_err());
+    // }
+
+    // 并发场景测试: 会话添加和删除并发
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_concurrent_add_remove() {
+        let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
+        let mock_resource = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(MockResourceProvider), config::RESOURCE_TIMEOUT_SECS));
+        let resource_app = ResourceAppService::new(mock_sessions.clone(), mock_resource.clone());
+        let resource_app = Arc::new(resource_app);
+        let session_app = Arc::new(SessionAppService::new(mock_sessions.clone()));
+
+        // 添加一些初始会话
+        let initial_sessions = 5;
+        for i in 0..initial_sessions {
+            let session_id = format!("session_{}", i);
+            session_app.handle_add_session(session_id).await.unwrap();
+        }
+
+        // 启动10个并发任务，每个任务交替添加和删除会话
+        let mut handles = vec![];
+        for i in 0..10 {
+            let session_app_clone = session_app.clone();
+            let resource_app_clone = resource_app.clone();
+            handles.push(tokio::spawn(async move {
+                let session_id = format!("concurrent_session_{}", i);
+                // 添加会话
+                session_app_clone.handle_add_session(session_id.clone()).await.unwrap();
+                // 立即删除会话
+                session_app_clone.handle_remove_session(&session_id, resource_app_clone).await
+            }));
+        }
+
+        // 等待所有任务完成
+        let results = futures::future::join_all(handles).await;
+
+        // 统计成功和失败的任务数
+        let success_count = results.iter().filter(|r| r.as_ref().unwrap().is_ok()).count();
+        let fail_count = results.len() - success_count;
+
+        // 输出结果，帮助调试
+        // println!("Concurrent add/remove: {} success, {} failed", success_count, fail_count);
+
+        // 验证最终会话数量
+        let final_count = mock_sessions.get_session_num().await;
+        assert_eq!(final_count, initial_sessions);
+    }
+
+    // 并发场景测试: 心跳更新并发
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_concurrent_heartbeat_updates() {
+        let mock_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
+        let session_app = Arc::new(SessionAppService::new(mock_sessions.clone()));
+
+        let session_id = "concurrent_heartbeat_session".to_string();
+        session_app.handle_add_session(session_id.clone()).await.unwrap();
+
+        // 启动20个并发任务更新同一个会话的心跳
+        let mut handles = vec![];
+        for _ in 0..20 {
+            let session_app_clone = session_app.clone();
+            let session_id_clone = session_id.clone();
+            handles.push(tokio::spawn(async move {
+                session_app_clone.handle_heartbeat(&session_id_clone).await
+            }));
+        }
+
+        // 等待所有任务完成
+        let results = futures::future::join_all(handles).await;
+
+        // 所有心跳更新都应该成功
+        for result in results {
+            assert!(result.unwrap().is_ok());
+        }
+
+        // 验证会话仍然存在
+        assert!(mock_sessions.session_exists(&session_id).await.is_ok());
+    }
+
+    // 并发场景测试: 会话数量接近上限时的并发添加
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_concurrent_add_near_limit() {
+        let max_sessions = 10; // 使用较小的限制便于测试
+        let mock_sessions = Arc::new(UserSessions::new(max_sessions));
+        let session_app = Arc::new(SessionAppService::new(mock_sessions.clone()));
+
+        // 先添加max_sessions - 2个会话
+        for i in 0..max_sessions - 2 {
+            let session_id = format!("session_{}", i);
+            session_app.handle_add_session(session_id).await.unwrap();
+        }
+
+        // 启动10个并发任务尝试添加会话
+        let mut handles = vec![];
+        for i in 0..10 {
+            let session_app_clone = session_app.clone();
+            handles.push(tokio::spawn(async move {
+                let session_id = format!("concurrent_near_limit_{}", i);
+                session_app_clone.handle_add_session(session_id).await
+            }));
+        }
+
+        // 等待所有任务完成
+        let results = futures::future::join_all(handles).await;
+
+        // 统计成功和失败的任务数
+        let success_count = results.iter().filter(|r| r.as_ref().unwrap().is_ok()).count();
+        let fail_count = results.len() - success_count;
+
+        // 成功的任务数应该是2，失败的应该是8
+        assert_eq!(success_count, 2);
+        assert_eq!(fail_count, 8);
+
+        // 验证最终会话数量
+        let final_count = mock_sessions.get_session_num().await;
+        assert_eq!(final_count, max_sessions);
     }
 }

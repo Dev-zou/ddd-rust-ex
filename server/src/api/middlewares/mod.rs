@@ -1,4 +1,4 @@
-pub(crate) mod logger;
+mod logger;
 
 pub fn init() {
     logger::init();

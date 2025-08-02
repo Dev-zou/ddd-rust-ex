@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::time::{interval, Duration};
 
-use crate::api::middlewares::logger;
 use crate::{api::{error::ApiError, message::{RequestMessage, ResponseMessage, WsMessage}}, app::{resource_app::ResourceAppService, session_app::SessionAppService, config}}; 
 use crate::domain::{resource_pool::ResourcePool, user_sessions::UserSessions};
 use crate::infra::resource_clib::CLibResourceProvider;
@@ -44,6 +43,10 @@ pub struct ApiServer {
     heartbeat_handler: Arc<HeartbeatMessageHandler>,
     /// 退出消息处理器
     exit_handler: Arc<ExitMessageHandler>,
+    /// 异步资源分配消息处理器
+    async_allocate_handler: Arc<AsyncAllocateMessageHandler>,
+    /// 异步资源释放消息处理器
+    async_release_handler: Arc<AsyncReleaseMessageHandler>,
 }
 
 impl ApiServer {
@@ -61,6 +64,8 @@ impl ApiServer {
             query_handler: Arc::new(QueryMessageHandler::new(resource_app.clone())),
             heartbeat_handler: Arc::new(HeartbeatMessageHandler::new(session_app.clone())),
             exit_handler: Arc::new(ExitMessageHandler::new(session_app.clone(), resource_app.clone())),
+            async_allocate_handler: Arc::new(AsyncAllocateMessageHandler::new(resource_app.clone())),
+            async_release_handler: Arc::new(AsyncReleaseMessageHandler::new(resource_app.clone())),
         }
     }
 
@@ -68,7 +73,7 @@ impl ApiServer {
     pub fn init_default() -> Arc<Self> {
         // 初始化依赖
         let user_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
-        let resource_pool = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(CLibResourceProvider)));
+        let resource_pool = Arc::new(ResourcePool::new(config::MAX_RESOURCE_NUM, Arc::new(CLibResourceProvider), config::RESOURCE_TIMEOUT_SECS));
         
         let session_app = Arc::new(SessionAppService::new(user_sessions.clone()));
         let resource_app= ResourceAppService::new(user_sessions, resource_pool);
@@ -78,10 +83,10 @@ impl ApiServer {
     }
 
     /// 创建自定义配置的API服务器实例
-    pub fn init_custom(max_session_num: usize, max_resource_num: usize) -> Arc<Self> {
+    pub fn init_custom(max_session_num: usize, max_resource_num: usize, timeout: usize) -> Arc<Self> {
         // 初始化依赖
         let user_sessions = Arc::new(UserSessions::new(max_session_num));
-        let resource_pool = Arc::new(ResourcePool::new(max_resource_num, Arc::new(CLibResourceProvider)));
+        let resource_pool = Arc::new(ResourcePool::new(max_resource_num, Arc::new(CLibResourceProvider), timeout));
         
         let session_app = Arc::new(SessionAppService::new(user_sessions.clone()));
         let resource_app = ResourceAppService::new(user_sessions, resource_pool);
@@ -130,11 +135,13 @@ impl ApiServer {
         let ws_message = WsMessage::new(None, session_id_resp);
         let json_str = serde_json::to_string(&ws_message).expect("Failed to serialize session_id response");
         ws_sender.send(Message::Text(json_str.into())).await.unwrap();
+        tracing::info!("发送会话ID: {:?}", ws_message);
 
         // 启动独立任务处理接收消息
         let recv_task = {
             let api_server = self.clone();
             let message_tx = message_tx.clone();
+            let connections = self.connections.clone();
             tokio::spawn(async move {
                 loop {
                     // 显式存储next()结果，避免临时值生命周期问题
@@ -145,7 +152,7 @@ impl ApiServer {
                             let text_result = msg.into_text();
                             if let Ok(text) = text_result {
                                 // 显式存储process_incoming()结果
-                                let process_result = api_server.process_incoming(&session_id_str, &text, message_tx.clone()).await;
+                                let process_result = api_server.process_incoming(&session_id_str, &text, message_tx.clone(), connections.clone()).await;
                                 if let Err(e) = process_result {
                                     tracing::info!("消息处理错误: {:?}", e);
                                 }
@@ -201,7 +208,8 @@ impl ApiServer {
         &self,
         session_id: &str,
         text: &str,
-        message_tx: mpsc::Sender<String> // 使用统一消息通道
+        message_tx: mpsc::Sender<String>, // 使用统一消息通道
+        connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
     ) -> Result<(), ApiError> {
         // 先解析为WsMessage<RequestMessage>
         match serde_json::from_str::<WsMessage<RequestMessage>>(text) {
@@ -223,6 +231,12 @@ impl ApiServer {
                     RequestMessage::Exit { .. } => {
                         self.exit_handler.handle(session_id.to_string(), text.as_bytes(), ws_message.id).await?
                     }
+                    RequestMessage::AsyncAllocate { session_id, resources } => {
+                        self.async_allocate_handler.handle(session_id.to_string(), text.as_bytes(), ws_message.id, connections.clone()).await?
+                    }
+                    RequestMessage::AsyncRelease { session_id, resources } => {
+                        self.async_release_handler.handle(session_id.to_string(), text.as_bytes(), ws_message.id, connections.clone()).await?
+                    }   
                 };
 
                 // 发送响应
@@ -279,35 +293,9 @@ impl ApiServer {
             }
         });
     }
+
+    /// `获取会话数量`
+    pub async fn get_session_num(&self) -> usize {
+        self.session_app.get_session_num().await
+    }
 }
-
-
-        // tokio::spawn(async move {
-        //     let mut interval = interval(Duration::from_secs(1));
-        //     loop {
-        //         interval.tick().await;
-                
-        //         // 检测超时资源（10秒超时）
-        //         let timeouts = pool.get_timeout_resources(10).await;
-        //         for (resource_id, session_id) in timeouts {
-        //             // 双重验证防止状态变更
-        //             if pool.is_held_by_session(resource_id, &session_id).await {
-        //                 // 释放资源
-        //                 if let Err(e) = pool.release_resource(resource_id).await {
-        //                     tracing::info!("超时释放失败: {:?}", e);
-        //                     continue;
-        //                 }
-                        
-        //                 // 清理会话
-        //                 if let Err(e) = sessions.user_release_resources(&session_id, vec![resource_id]).await {
-        //                     tracing::info!("会话清理失败: {:?}", e);
-        //                 }
-                        
-        //                 // 发送通知
-        //                 if let Err(e) = tx.send((session_id, resource_id)).await {
-        //                     tracing::info!("通知发送失败: {:?}", e);
-        //                 }
-        //             }
-        //         }
-        //     }
-        // });

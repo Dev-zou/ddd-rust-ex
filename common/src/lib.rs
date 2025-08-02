@@ -21,6 +21,14 @@ pub enum RequestMessage {
     Exit {
         session_id: String,
     },
+    AsyncAllocate {
+        session_id: String,
+        resources: Vec<u16>,
+    },
+    AsyncRelease {
+        session_id: String,
+        resources: Vec<u16>,
+    },
 }
 
 /// 响应消息格式
@@ -34,13 +42,18 @@ pub enum ResponseMessage {
         session_id: String,
         success_resources: Vec<u16>,
         failed_resources: Vec<(u16, String)>, // (resource_id, error_reason)
+        error_code: u32,
     },
     ReleaseResp {
         session_id: String,
+        success_resources: Vec<u16>,
+        failed_resources: Vec<(u16, String)>, // (resource_id, error_reason)
+        error_code: u32,
     },
     QueryResp {
         session_id: String,
         resources: Vec<u16>,
+        error_code: u32,
     },
     TimeoutResourceInfo {
         session_id: String,
@@ -48,9 +61,30 @@ pub enum ResponseMessage {
     },
     HeartbeatResp {
         session_id: String,
+        error_code: u32,
     },
     ExitResp {
         session_id: String,
+    },
+    AsyncAllocateResp {
+        session_id: String,
+        error_code: u32,
+    },
+    AsyncReleaseResp {
+        session_id: String,
+        error_code: u32,
+    },
+    AsyncAllocateResult {
+        session_id: String,
+        success_resources: Vec<u16>,
+        failed_resources: Vec<(u16, String)>, // (resource_id, error_reason)
+        error_code: u32,
+    },
+    AsyncReleaseResupt {
+        session_id: String,
+        success_resources: Vec<u16>,
+        failed_resources: Vec<(u16, String)>, // (resource_id, error_reason)
+        error_code: u32,
     },
 }
 

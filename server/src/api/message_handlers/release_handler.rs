@@ -21,26 +21,48 @@ impl ReleaseMessageHandler {
 }
 
 impl MessageHandler for ReleaseMessageHandler {
-    async fn handle(&self, session_id: String, data: &[u8], message_id: Option<String>) -> Result<String, ApiError> {
+    async fn handle(&self, base_session_id: String, data: &[u8], message_id: Option<String>) -> Result<String, ApiError> {
         // 解析请求数据
         let ws_message = serde_json::from_slice::<WsMessage<RequestMessage>>(data).unwrap();
         let (request_session_id, resources) = match &ws_message.data {
             RequestMessage::Release { session_id, resources } => (session_id, resources.clone()),
-            _ => return Err(ApiError::InvalidRequest),
+            _ => {
+                return Ok(self.new_default_resp(base_session_id, 1));
+            }
         };
 
         // 校验session_id
-        self.intercept(&session_id, request_session_id)?;
+        let err_code = self.intercept(&base_session_id, request_session_id);
+        if err_code != 0 {
+            return Ok(self.new_default_resp(request_session_id.clone(), err_code));
+        }
+        tracing::info!("session {:?} release resource {:?}", base_session_id, resources);
+        if let Ok((success_resources, failed_resources)) = self.resource_app.handle_release(&base_session_id, resources).await {
+            tracing::info!("session {:?} release resource, success_resources: {:?}, failed_resources: {:?}", base_session_id, success_resources, failed_resources);
+            // 构建响应
+            let response = ResponseMessage::ReleaseResp {
+                session_id: base_session_id.clone(),
+                success_resources,
+                failed_resources,
+                error_code: 0,
+            };
+            let response_ws_message = WsMessage::new(message_id, response);
 
-        tracing::info!("session {:?} release resource {:?}", session_id, resources);
-        self.resource_app.handle_release(&session_id, resources).await?;
+            return Ok(serde_json::to_string(&response_ws_message).unwrap());
+        }
 
-        // 构建响应
+        Ok(self.new_default_resp(base_session_id, 2))
+    }
+
+    fn new_default_resp(&self, session_id: String, error_code: u32) -> String {
         let response = ResponseMessage::ReleaseResp {
             session_id: session_id.clone(),
+            success_resources: Vec::new(),
+            failed_resources: Vec::new(),
+            error_code,
         };
-        let response_ws_message = WsMessage::new(message_id, response);
+        let response_ws_message = WsMessage::new(None, response);
 
-        Ok(serde_json::to_string(&response_ws_message).unwrap())
+        serde_json::to_string(&response_ws_message).unwrap()
     }
 }

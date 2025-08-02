@@ -11,3 +11,21 @@ impl ResourceProvider for MockResourceProvider {
         Ok(())
     }
 }
+
+pub struct MockFailResourceProvider;
+
+impl ResourceProvider for MockFailResourceProvider {
+    fn allocate(&self, id: u32) -> Result<(), ResourceError> {
+        if id == 15 {
+            return Err(ResourceError::ResourceAllocFailed(id as u16));
+        }
+        Ok(())
+    }
+
+    fn release(&self, id: u32) -> Result<(), ResourceError> {
+        if id == 0 {
+            return Err(ResourceError::ResourceAllocFailed(id as u16));
+        }
+        Ok(())
+    }
+}

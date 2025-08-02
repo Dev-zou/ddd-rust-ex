@@ -40,7 +40,7 @@ impl UserSessions {
 
     pub async fn add_session(&self, session_id: String) -> Result<(), UserSessionsError> {
         let mut sessions = self.sessions.write().await;
-        if self.max_session_num < sessions.len() {
+        if self.max_session_num <= sessions.len() {
             return Err(UserSessionsError::QuotaExceeded(self.max_session_num.try_into().unwrap()));
         }
         sessions.insert(
@@ -192,6 +192,10 @@ impl UserSessions {
             Err(UserSessionsError::InvalidSession(session_id.to_owned()))
         }
     }
+    
+    pub async fn get_session_num(&self) -> usize {
+        self.sessions.read().await.len()
+    }
 }
 
 #[cfg(test)]
@@ -273,12 +277,32 @@ mod tests {
         assert_eq!(sessions.status_report_resource_num("session_1").await.unwrap(), 1);
     }
 
-    // #[tokio::test]
-    // async fn test_session_expiry() {
-    //     let sessions = UserSessions::new(config::MAX_SESSION_NUM);
-    //     sessions.add_session("session_1".to_string()).await;
-    //     // 模拟超时后清理（需扩展实现）
-    //     tokio::time::sleep(Duration::from_secs(10)).await;
-    //     assert!(sessions.remove_session("session_1").await.is_some()); // 实际需依赖超时机制
-    // }
+    #[tokio::test]
+    async fn test_update_session_heartbeat() {
+        let sessions = UserSessions::new(config::MAX_SESSION_NUM);
+        let session_id = "session_1".to_string();
+        
+        // 测试1: 更新存在的会话的心跳时间
+        sessions.add_session(session_id.clone()).await.unwrap();
+        
+        // 记录更新前的时间
+        let before_update = SystemTime::now();
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        
+        // 更新心跳
+        let result = sessions.update_session_heartbeat(&session_id).await;
+        assert!(result.is_ok());
+        
+        // 获取更新后的会话信息
+        let sessions_read = sessions.sessions.read().await;
+        let session = sessions_read.get(&session_id).unwrap();
+        assert!(session.last_time > before_update);
+        drop(sessions_read);
+        
+        // 测试2: 尝试更新不存在的会话的心跳时间
+        let invalid_session_id = "invalid_session".to_string();
+        let result = sessions.update_session_heartbeat(&invalid_session_id).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(UserSessionsError::InvalidSession(_))));
+    }
 }

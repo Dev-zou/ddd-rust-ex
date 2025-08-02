@@ -4,14 +4,13 @@ mod infra;
 mod domain;
 
 use std::net::SocketAddr;
-use crate::api::middlewares::logger;
+use crate::api::middlewares;
 use crate::api::server::ApiServer;
-use crate::app::config;
 
 // src/main.rs
 #[tokio::main]
 async fn main() {
-    logger::init();
+    middlewares::init();
     
     // 使用默认配置初始化服务器
     let server = ApiServer::init_default();
