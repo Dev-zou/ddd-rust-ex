@@ -13,7 +13,8 @@ pub struct AllocateMessageHandler {
 
 impl AllocateMessageHandler {
     /// 创建新的资源分配消息处理器
-    pub fn new(resource_app: Arc<ResourceAppService>) -> Self {
+    #[must_use]
+    pub const fn new(resource_app: Arc<ResourceAppService>) -> Self {
         Self {
             resource_app,
         }
@@ -57,7 +58,7 @@ impl MessageHandler for AllocateMessageHandler {
 
     fn new_default_resp(&self, session_id: String, error_code: u32) -> String {
         let response = ResponseMessage::AllocateResp {
-            session_id: session_id.clone(),
+            session_id,
             success_resources: Vec::new(),
             failed_resources: Vec::new(),
             error_code,

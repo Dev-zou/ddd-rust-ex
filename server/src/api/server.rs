@@ -6,7 +6,7 @@ use tokio::time::{interval, Duration};
 use crate::{api::{error::ApiError, message::{RequestMessage, ResponseMessage, WsMessage}}, app::{resource_app::ResourceAppService, session_app::SessionAppService, config}}; 
 use crate::domain::{resource_pool::ResourcePool, user_sessions::UserSessions};
 use crate::infra::resource_clib::CLibResourceProvider;
-use crate::api::message_handlers::*;
+use crate::api::message_handlers::{AllocateMessageHandler, AsyncAllocateMessageHandler, AsyncMessageHandler, AsyncReleaseMessageHandler, ExitMessageHandler, HeartbeatMessageHandler, MessageHandler, QueryMessageHandler, ReleaseMessageHandler};
 
 use axum::{
     extract::{ws::{Message, WebSocket}, WebSocketUpgrade}, response::Response, routing::get, Extension, Router
@@ -31,7 +31,7 @@ pub struct ApiServer {
     session_app: Arc<SessionAppService>,
     /// 资源应用服务
     resource_app: Arc<ResourceAppService>,
-    /// WebSocket连接映射
+    /// 连接映射
     connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
     /// 资源分配消息处理器
     allocate_handler: Arc<AllocateMessageHandler>,
@@ -52,8 +52,8 @@ pub struct ApiServer {
 impl ApiServer {
     /// 初始化API服务
     #[must_use] pub fn new(
-        session_app: Arc<SessionAppService>,
-        resource_app: Arc<ResourceAppService>,
+        session_app: &Arc<SessionAppService>,
+        resource_app: &Arc<ResourceAppService>,
     ) -> Self {
         Self {
             session_app: session_app.clone(),
@@ -70,6 +70,7 @@ impl ApiServer {
     }
 
     /// 创建默认配置的API服务器实例
+    #[must_use]
     pub fn init_default() -> Arc<Self> {
         // 初始化依赖
         let user_sessions = Arc::new(UserSessions::new(config::MAX_SESSION_NUM));
@@ -79,10 +80,11 @@ impl ApiServer {
         let resource_app= ResourceAppService::new(user_sessions, resource_pool);
         let resource_app = Arc::new(resource_app);
 
-        Arc::new(Self::new(session_app, resource_app))
+        Arc::new(Self::new(&session_app, &resource_app))
     }
 
     /// 创建自定义配置的API服务器实例
+    #[must_use]
     pub fn init_custom(max_session_num: usize, max_resource_num: usize, timeout: usize) -> Arc<Self> {
         // 初始化依赖
         let user_sessions = Arc::new(UserSessions::new(max_session_num));
@@ -92,14 +94,14 @@ impl ApiServer {
         let resource_app = ResourceAppService::new(user_sessions, resource_pool);
         let resource_app = Arc::new(resource_app);
 
-        Arc::new(Self::new(session_app, resource_app))
+        Arc::new(Self::new(&session_app, &resource_app))
     }
 
     /// `创建路由`
     pub fn create_router(self: Arc<Self>) -> Router {
         Router::new()
                 .route("/ws", get(handle_websocket))
-                .layer(Extension(self.clone()))
+                .layer(Extension(self))
     }
 
     /// `启动HTTP服务并挂载WebSocket路由`
@@ -191,7 +193,7 @@ impl ApiServer {
             
             // 删除会话记录
             match session_app.handle_remove_session(&session_id_copy, resource_app).await {
-                Ok(_) => {
+                Ok(()) => {
                     tracing::info!("Successfully handle exit for session {}", session_id_copy);
                 },
                 Err(e) =>  {

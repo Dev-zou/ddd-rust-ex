@@ -13,7 +13,8 @@ pub struct AsyncReleaseMessageHandler {
 
 impl AsyncReleaseMessageHandler {
     /// 创建新的资源释放消息处理器
-    pub fn new(resource_app: Arc<ResourceAppService>) -> Self {
+    #[must_use]
+    pub const fn new(resource_app: Arc<ResourceAppService>) -> Self {
         Self {
             resource_app,
         }
@@ -38,15 +39,13 @@ impl AsyncMessageHandler for AsyncReleaseMessageHandler {
         }
 
         let resource_app = self.resource_app.clone();
-        let connections = connections.clone();
         let session_id_copy = base_session_id.clone();
-        let resources_copy = resources.clone();
 
         tokio::spawn(async move {
             // 创建释放通知消息
-            tracing::info!("session {:?} async release resource {:?}", session_id_copy, resources_copy);
+            tracing::info!("session {:?} async release resource {:?}", session_id_copy, resources);
 
-            if let Ok((success_resources, failed_resources)) = resource_app.handle_release(&session_id_copy, resources_copy).await {
+            if let Ok((success_resources, failed_resources)) = resource_app.handle_release(&session_id_copy, resources).await {
                 let allocate_resp = ResponseMessage::AsyncReleaseResupt {
                     session_id: session_id_copy.clone(),
                     success_resources,
@@ -78,7 +77,7 @@ impl AsyncMessageHandler for AsyncReleaseMessageHandler {
 
     fn new_default_resp(&self, session_id: String, error_code: u32) -> String {
         let response = ResponseMessage::AsyncReleaseResp {
-            session_id: session_id.clone(),
+            session_id,
             error_code,
         };
         let response_ws_message = WsMessage::new(None, response);

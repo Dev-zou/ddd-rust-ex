@@ -24,7 +24,6 @@ use server::domain::user_sessions::UserSessions;
 use server::domain::resource_pool::ResourcePool;
 use server::infra::resource_mock::MockResourceProvider;
 use server::app::config;
-use server::api::middlewares;
 
 // 启动测试服务器并返回地址
 async fn start_test_server() -> (SocketAddr, Arc<ApiServer>) {
@@ -178,7 +177,6 @@ async fn test_text_message_echo_simple() {
 
 #[tokio::test]
 async fn test_session_id_response() {
-    middlewares::init();
     // 启动测试服务器
     let (server_addr, _server) = start_test_server().await;
 

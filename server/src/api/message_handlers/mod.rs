@@ -1,6 +1,3 @@
-//! 消息处理器模块
-//! 包含各种WebSocket消息类型的处理逻辑
-
 mod allocate_handler;
 mod release_handler;
 mod query_handler;

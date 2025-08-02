@@ -10,6 +10,7 @@ pub struct SessionAppService {
 }
 
 impl SessionAppService {
+    #[must_use]
     pub const fn new(user_sessions: Arc<UserSessions>) -> Self {
         Self { user_sessions }
     }

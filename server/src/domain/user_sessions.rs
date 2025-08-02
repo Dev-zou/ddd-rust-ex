@@ -31,6 +31,7 @@ pub struct UserSessions {
 }
 
 impl UserSessions {
+    #[must_use]
     pub fn new(max_session_num: usize) -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::with_capacity(10))),

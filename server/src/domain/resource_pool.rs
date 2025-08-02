@@ -150,8 +150,7 @@ impl ResourcePool {
 
     pub async fn set_resource_allocation_time(&self, resource_id: u16, time: Option<SystemTime>) -> Result<(), ResourcePoolError> {
         if let Some(resource) = self.resources.get(resource_id as usize) {
-            let mut guard = resource.write().await;
-            guard.allocation_time = time;
+            resource.write().await.allocation_time = time;
             Ok(())
         } else {
             Err(ResourcePoolError::ResourceNotFound(resource_id))

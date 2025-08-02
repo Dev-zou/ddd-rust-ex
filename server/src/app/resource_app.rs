@@ -15,7 +15,8 @@ pub struct ResourceAppService {
 }
 
 impl ResourceAppService {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         user_sessions: Arc<UserSessions>,
         resource_pool: Arc<ResourcePool>,
     ) -> Self {
@@ -40,7 +41,7 @@ impl ResourceAppService {
 
         for res_id in resource_ids {
             match self.resource_pool.allocate_resource(res_id, session_id.to_string()).await {
-                Ok(_) => success_res.push(res_id),
+                Ok(()) => success_res.push(res_id),
                 Err(e) => failed_resources.push((res_id, e.to_string())),
             }
         }
@@ -61,7 +62,7 @@ impl ResourceAppService {
     ) -> Result<Vec<u16>, AppError> {
         self.user_sessions.user_get_resources(session_id)
             .await
-            .map_err(|e| AppError::Session(e))
+            .map_err(AppError::Session)
     }
 
     /// 处理资源释放请求
@@ -74,7 +75,7 @@ impl ResourceAppService {
         let mut failed_resources = Vec::new();
         for res_id in resource_ids {
             match self.resource_pool.release_resource(res_id).await {
-                Ok(_) => success_res.push(res_id),
+                Ok(()) => success_res.push(res_id),
                 Err(e) => failed_resources.push((res_id, e.to_string())),
             }
         }
@@ -103,11 +104,10 @@ impl ResourceAppService {
                 tracing::info!("会话清理失败: {:?}", e);
             }
             
-            if(timeouts_resources.get(&session_id).is_none()){
-                timeouts_resources.insert(session_id, vec![resource_id]);
-            } else {
-                timeouts_resources.get_mut(&session_id).unwrap().push(resource_id);
-            }
+            timeouts_resources
+                .entry(session_id)
+                .or_insert_with(Vec::new)
+                .push(resource_id);
         }
         timeouts_resources
     }
